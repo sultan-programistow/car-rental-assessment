@@ -6,8 +6,12 @@ import type { AvailabilityRow, Car, CarType, Reservation } from './types'
  * every failure into ApiError{status,message} so pages render exactly one
  * thing: the backend's {"message": ...} text (409 conflict wording comes
  * from the server - the arbiter of the race - not from the UI).
+ *
+ * Base URL: same-origin '/api' in dev (Vite proxy) AND in a single-origin
+ * deployment; cross-origin deployments set VITE_API_URL to the backend's
+ * origin (the backend then opt-ins that origin via CORS).
  */
-const client = axios.create({ baseURL: '/api' })
+const client = axios.create({ baseURL: `${(import.meta.env.VITE_API_URL as string | undefined) ?? ''}/api` })
 
 export class ApiError extends Error {
   readonly status: number;

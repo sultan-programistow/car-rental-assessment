@@ -1,0 +1,18 @@
+# Vercel container build for the Spring Boot backend ("Run any Dockerfile on Vercel").
+# Multi-stage: maven build -> slim JRE runtime. Listens on $PORT (Vercel sets it;
+# defaults to 80 locally so `docker run` behaves like java -jar).
+
+FROM maven:3.9-eclipse-temurin-25 AS build
+WORKDIR /app
+# 1) dependencies first: this layer survives source edits (build cache)
+COPY pom.xml .
+RUN mvn -q -B dependency:go-offline
+# 2) sources + package (tests run in CI, not in the image build)
+COPY src ./src
+RUN mvn -q -B package -DskipTests
+
+FROM eclipse-temurin:25-jre-alpine
+WORKDIR /app
+COPY --from=build /app/target/car-rental-backend-0.0.1.jar app.jar
+EXPOSE 8080
+CMD ["sh", "-c", "java -XX:MaxRAMPercentage=75 -jar app.jar --server.port=${PORT:-8080}"]
