@@ -28,6 +28,12 @@ public class CarRentalApplication {
                     uri.getPath() + (uri.getQuery() == null ? "" : "?" + uri.getQuery()));
             System.setProperty("spring.datasource.username", user);
             System.setProperty("spring.datasource.password", password);
+            // Password NEVER logged - only the shape of the connection actually configured.
+            System.out.printf("[startup] DATABASE_URL detected -> host=%s db=%s%n",
+                    hostPart, uri.getPath().replaceFirst("^/", ""));
+        } else {
+            System.out.println("[startup] DATABASE_URL not present or not postgres://-shaped -> "
+                    + "falling back to spring.datasource defaults (see application.yml)");
         }
         SpringApplication.run(CarRentalApplication.class, args);
     }
