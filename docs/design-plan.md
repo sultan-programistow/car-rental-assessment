@@ -51,8 +51,8 @@ will use Java and React to prepare this Technical Assessment."*
 ## 3. Domain model
 
 - **`Car`** — one row per vehicle *instance*. Columns: `id`, `type VARCHAR CHECK (type IN ('SEDAN','SUV','VAN'))`, `removed_at` NOT used (see delete decision below). Java enum `CarType` mapped `@Enumerated(EnumType.STRING)` (never ORDINAL).
-- **`Reservation`** (rental) — `id`, `car_id FK`, **NO type column (user decision: normalized schema — car is the single owner of type; historical type derivable via FK; a real product would use audit tables for that, which this choice leaves open)**, **NO duration column (user decision: derived everywhere as return_at − pickup_at; "N days" input exists only at the API boundary)**, **`pickup_at LocalDateTime` + `return_at LocalDateTime` both persisted, `_at` suffix naming for timestamps** (both boundaries denormalized deliberately for indexable time-range comparisons), **`borrowed_by VARCHAR` = email the rental-service manager types into the UI** (no user entity, no FK, no auth — placeholder column, one-line justification in README).
-- Range semantics: **half-open `[pickup, return)`** — a car returned at instant X is bookable at X. Back-to-back bookings both succeed; 1-minute overlap conflicts.
+- **`Reservation`** (rental) — `id`, `car_id FK`, **NO type column (user decision: normalized schema — car is the single owner of type; historical type derivable via FK; a real product would use audit tables for that, which this choice leaves open)**, **NO duration column (user decision: derived everywhere as return_at − pickup_at; "N days" input exists only at the API boundary)**, **`pickup_at` + `return_at` as `TIMESTAMPTZ` instants** (user decision Nov 5: DB stores *precise moments*; the API input stays wall-clock `LocalDateTime` — the assignment's language — which the backend interprets in ONE configurable booking zone `BOOKING_ZONE`, default `Europe/Warsaw`, and converts; **"N days" = N calendar days in the booking zone** (DST-correct civil arithmetic, exact span 71h across spring DST) then to instants; **API responses emit ISO-8601 `Z` instants and the frontend owns presentation**), **`borrowed_by VARCHAR` = email the rental-service manager types into the UI** (no user entity, no FK, no auth — placeholder column, one-line justification in README).
+- Range semantics: **half-open `[pickup, return)` over instants** — a car returned at instant X is bookable at X. Back-to-back bookings both succeed; 1-minute overlap conflicts.
 - Index: `(car_id, pickup, return)`.
 - Fleet seed: **5 SEDAN, 3 SUV, 2 VAN** (asymmetric on purpose — scarcity of vans is the visual/exhaustion story) + a few example reservations/history rows so no page is empty on first run (user-confirmed).
 
@@ -63,7 +63,7 @@ will use Java and React to prepare this Technical Assessment."*
 ```sql
 CREATE EXTENSION IF NOT EXISTS btree_gist;
 ALTER TABLE reservation ADD CONSTRAINT no_double_booking
-  EXCLUDE USING gist (car_id WITH =, tsrange(pickup, return) WITH &&);
+  EXCLUDE USING gist (car_id WITH =, tstzrange(pickup_at, return_at, '[)') WITH &&);
 ```
 
 - The DB rejects two overlapping rentals on the same car **regardless of which node issued them**.

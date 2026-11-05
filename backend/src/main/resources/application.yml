@@ -23,3 +23,10 @@ spring:
 logging:
   level:
     org.hibernate.SQL: WARN
+
+carrental:
+  # Single booking zone: the backend interprets the manager's wall-clock input
+  # ("pickup 2027-01-10 10:00") as an instant in THIS zone and stores it as a
+  # timestamptz instant. Presentation (browser-local rendering) is the
+  # frontend's job. Override with BOOKING_ZONE when needed.
+  booking-zone: ${BOOKING_ZONE:Europe/Warsaw}
