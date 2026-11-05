@@ -99,7 +99,7 @@ class RentalServiceTest {
     @Test
     void conflict_whenTypeHasNoFreeCar() {
         TimeRange window = TimeRange.forDaysEx(TOMORROW_10, BOOKING_ZONE, 3);
-        when(cars.findAvailableFor(CarType.SEDAN, window.pickupAt(), window.returnAt()))
+        when(cars.findFreeCarIds(CarType.SEDAN, window.pickupAt(), window.returnAt()))
                 .thenReturn(List.of());
         assertThatThrownBy(() -> rental.reserve(request(TOMORROW_10, 3)))
                 .isInstanceOf(ConflictException.class)
@@ -107,11 +107,30 @@ class RentalServiceTest {
     }
 
     @Test
-    void books_theFreeCar_storingInstantsDerivedFromCivilDays() {
+    void conflict_whenAllCandidatesTurnedOutTaken() {
         Car sedan = sedanWithId(3);
         TimeRange window = TimeRange.forDaysEx(TOMORROW_10, BOOKING_ZONE, 3);
-        when(cars.findAvailableFor(CarType.SEDAN, window.pickupAt(), window.returnAt()))
-                .thenReturn(List.of(sedan));
+        when(cars.findFreeCarIds(CarType.SEDAN, window.pickupAt(), window.returnAt()))
+                .thenReturn(List.of(3L));
+        when(cars.lockById(3L)).thenReturn(Optional.of(sedan));
+        // candidate was stale: the car got taken between scan and lock
+        when(reservations.existsByCarIdAndPickupAtBeforeAndReturnAtAfter(3L, window.returnAt(), window.pickupAt()))
+                .thenReturn(true);
+
+        assertThatThrownBy(() -> rental.reserve(request(TOMORROW_10, 3)))
+                .isInstanceOf(ConflictException.class)
+                .hasMessageContaining("reload");
+    }
+
+    @Test
+    void books_theFirstFreeCandidate_storingInstantsDerivedFromCivilDays() {
+        Car sedan = sedanWithId(3);
+        TimeRange window = TimeRange.forDaysEx(TOMORROW_10, BOOKING_ZONE, 3);
+        when(cars.findFreeCarIds(CarType.SEDAN, window.pickupAt(), window.returnAt()))
+                .thenReturn(List.of(3L));
+        when(cars.lockById(3L)).thenReturn(Optional.of(sedan));
+        when(reservations.existsByCarIdAndPickupAtBeforeAndReturnAtAfter(3L, window.returnAt(), window.pickupAt()))
+                .thenReturn(false);
 
         ReservationDto result = rental.reserve(request(TOMORROW_10, 3));
 
@@ -125,9 +144,33 @@ class RentalServiceTest {
     }
 
     @Test
+    void skips_aLostRace_andBooks_theNextCandidate() {
+        Car busy = sedanWithId(1);
+        Car free = sedanWithId(2);
+        TimeRange window = TimeRange.forDaysEx(TOMORROW_10, BOOKING_ZONE, 3);
+        when(cars.findFreeCarIds(CarType.SEDAN, window.pickupAt(), window.returnAt()))
+                .thenReturn(List.of(1L, 2L));
+        when(cars.lockById(1L)).thenReturn(Optional.of(busy));
+        when(cars.lockById(2L)).thenReturn(Optional.of(free));
+        when(reservations.existsByCarIdAndPickupAtBeforeAndReturnAtAfter(any(), any(), any()))
+                .thenReturn(false);
+        // first flush loses the constraint race, second candidate's flush succeeds
+        org.mockito.Mockito.doThrow(new DataIntegrityViolationException("no_double_booking"))
+                .doAnswer(inv -> inv.getArgument(0))
+                .when(reservations).saveAndFlush(any(Reservation.class));
+
+        ReservationDto result = rental.reserve(request(TOMORROW_10, 3));
+
+        assertThat(result.carId()).isEqualTo(2L);
+        verify(reservations, org.mockito.Mockito.times(2)).saveAndFlush(any(Reservation.class));
+    }
+
+    @Test
     void constraintViolation_translatesTo409Conflict() {
         Car sedan = sedanWithId(3);
-        when(cars.findAvailableFor(any(), any(), any())).thenReturn(List.of(sedan));
+        TimeRange window = TimeRange.forDaysEx(TOMORROW_10, BOOKING_ZONE, 3);
+        when(cars.findFreeCarIds(any(), any(), any())).thenReturn(List.of(3L));
+        when(cars.lockById(3L)).thenReturn(Optional.of(sedan));
         when(reservations.saveAndFlush(any()))
                 .thenThrow(new DataIntegrityViolationException("no_double_booking"));
 

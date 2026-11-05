@@ -67,32 +67,47 @@ public class RentalService {
     }
 
     /**
-     * Books a car of a given type. Assigns the lowest-id free car inside a
-     * FOR UPDATE transaction; the DB constraint is the film of safety net.
-     * saveAndFlush so a constraint violation surfaces HERE (at flush) and can
-     * be translated to 409 instead of dying at commit outside our hands.
+     * Books a car of a given type.
+     *
+     * Concurrency model, in three acts:
+     *  1. candidate scan WITHOUT locks (cheap; candidates can be stale),
+     *  2. per-candidate: lock ONE car row (waiting), then re-check overlap on
+     *     the freshly locked state - a car locked by another in-flight
+     *     booking is sensed off as busy here (never via guessing), so the
+     *     loser moves to the NEXT candidate and the whole fleet is usable
+     *     under contention,
+     *  3. the PostgreSQL exclusion constraint remains the last line of
+     *     defence; a violation is a lost race -> try the next candidate.
+     * No booking is ever lost silently and the fleet is never starved.
      */
     @Transactional
     public ReservationDto reserve(ReserveCarRequest request) {
         TimeRange window = validWindow(request.pickupAt(), request.durationDays(), true);
-        List<Car> candidates = cars.findAvailableFor(request.carType(), window.pickupAt(), window.returnAt());
-        if (candidates.isEmpty()) {
-            throw new ConflictException(
-                    "No %s available for the requested time window - the type's fleet is exhausted"
-                            .formatted(request.carType()));
+        List<Long> candidates = cars.findFreeCarIds(request.carType(), window.pickupAt(), window.returnAt());
+        boolean touchedAnyCandidate = false;
+        for (Long carId : candidates) {
+            Car car = cars.lockById(carId).orElse(null);
+            if (car == null) {
+                continue; // removed meanwhile - next candidate
+            }
+            touchedAnyCandidate = true;
+            if (reservations.existsByCarIdAndPickupAtBeforeAndReturnAtAfter(
+                    carId, window.returnAt(), window.pickupAt())) {
+                continue; // stale candidate - someone took this car between scan and lock
+            }
+            Reservation reservation = new Reservation(
+                    car, window.pickupAt(), window.returnAt(), request.borrowedBy());
+            try {
+                reservations.saveAndFlush(reservation);
+            } catch (DataIntegrityViolationException e) {
+                continue; // lost a race the re-check could not cover - next candidate
+            }
+            return ReservationDto.from(reservation);
         }
-        Car car = candidates.get(0);
-        Reservation reservation = new Reservation(
-                car, window.pickupAt(), window.returnAt(), request.borrowedBy());
-        try {
-            reservations.saveAndFlush(reservation);
-        } catch (DataIntegrityViolationException e) {
-            // Lost a race the row lock could not serialize (e.g. bookable car
-            // picked by another node in the same instant). The constraint won.
-            throw new ConflictException(
-                    "The car was booked by someone else before you - reload and retry");
-        }
-        return ReservationDto.from(reservation);
+        throw new ConflictException(touchedAnyCandidate
+                ? "The car was booked by someone else before you - reload and retry"
+                : "No %s available for the requested time window - the type's fleet is exhausted"
+                        .formatted(request.carType()));
     }
 
     /** Cancel a future reservation. History is immutable on purpose. */

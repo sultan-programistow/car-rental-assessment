@@ -10,25 +10,24 @@ import org.springframework.data.repository.query.Param;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 
 public interface CarRepository extends JpaRepository<Car, Long> {
 
     /**
-     * Cars of a type that are free for the whole requested (half-open) window.
+     * Candidate car ids of a type that were free for the whole requested
+     * (half-open) window AT SCAN TIME - without locking. Locking happens
+     * per car in {@link #lockById}; only then is freshness really decided.
      *
-     * PESSIMISTIC_WRITE locks the candidate car rows: two concurrent
-     * reservations (also from other app instances) that target the same car
-     * serialize on those rows; the second transaction re-evaluates overlap
-     * after the first one commits, so it never double-books. The exclusion
-     * constraint in the DB remains as the safety net for anything the lock
-     * cannot cover.
-     *
-     * Deterministic pick: lowest id first (stable, explainable; a
-     * least-recently-returned heuristic would be the "smarter" pick).
+     * Concurrency model (see RentalService.reserve): several app instances
+     * may scan the same candidates simultaneously BY DESIGN - contention is
+     * resolved on ONE car row at a time, never on the whole candidate set.
+     * Locking the full candidate set (the intuitive first fix) makes every
+     * loser queue up on candidate[0] and starves the rest of the fleet:
+     * proven by the Testcontainers race test.
      */
-    @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("""
-            SELECT c FROM Car c
+            SELECT c.id FROM Car c
             WHERE c.type = :type
               AND NOT EXISTS (
                     SELECT r FROM Reservation r
@@ -37,9 +36,19 @@ public interface CarRepository extends JpaRepository<Car, Long> {
                       AND r.returnAt > :pickupAt)
             ORDER BY c.id
             """)
-    List<Car> findAvailableFor(@Param("type") CarType type,
-                               @Param("pickupAt") Instant pickupAt,
-                               @Param("returnAt") Instant returnAt);
+    List<Long> findFreeCarIds(@Param("type") CarType type,
+                              @Param("pickupAt") Instant pickupAt,
+                              @Param("returnAt") Instant returnAt);
+
+    /**
+     * Row lock on a single car (HQL cannot express SKIP LOCKED, and a full
+     * candidate-set lock starves the fleet - see above). WAITING (not skip)
+     * is deliberate: skipping a locked-but-still-maybe-free car produces the
+     * constraint-violation path instead of booking the next car.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT c FROM Car c WHERE c.id = :id")
+    Optional<Car> lockById(@Param("id") Long id);
 
     List<Car> findAllByOrderByTypeAscIdAsc();
 }

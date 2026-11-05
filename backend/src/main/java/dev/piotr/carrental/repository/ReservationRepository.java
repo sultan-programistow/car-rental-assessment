@@ -18,6 +18,15 @@ public interface ReservationRepository extends JpaRepository<Reservation, Long> 
     List<Reservation> findByReturnAtAfter(Instant now);
 
     /**
+     * Overlap check for the per-car booking loop, evaluated AFTER the car
+     * row lock was acquired (fresh, committed state). Half-open semantics:
+     * pickup_at < window.returnAt AND return_at > window.pickupAt.
+     */
+    boolean existsByCarIdAndPickupAtBeforeAndReturnAtAfter(Long carId,
+                                                           Instant windowReturnAt,
+                                                           Instant windowPickupAt);
+
+    /**
      * Per-type availability in ONE query. Evaluates overlap straight in SQL
      * (car type reached through the car table: car is the single owner of
      * 'type' - reservation is normalized and carries no type copy).
