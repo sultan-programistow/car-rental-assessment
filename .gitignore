@@ -1,0 +1,18 @@
+# Build outputs
+target/
+dist/
+build/
+
+# Node
+node_modules/
+
+# Credentials & environment
+.env
+*.local
+
+# IDE / OS noise
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db

@@ -1,0 +1,25 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: car-rental-backend
+  datasource:
+    # Local default matches docker-compose.yml. In deployment DATABASE_URL
+    # (Neon-style) takes over - see DataSourceConfig.
+    url: ${DATABASE_URL_JDBC:jdbc:postgresql://localhost:5432/carrental}
+    username: ${DATABASE_USER:carrental}
+    password: ${DATABASE_PASSWORD:carrental}
+  jpa:
+    hibernate:
+      ddl-auto: validate   # Flyway owns the schema; Hibernate only verifies mappings
+    open-in-view: false
+    properties:
+      hibernate.jdbc.time_zone: UTC
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+logging:
+  level:
+    org.hibernate.SQL: WARN
