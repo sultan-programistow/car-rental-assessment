@@ -7,13 +7,22 @@ import { CAR_TYPES, type AvailabilityRow, type CarType } from '../types'
 type Availability = Record<CarType, AvailabilityRow | null>
 
 /**
- * The picker page: choose type + pickup + days, see live availability per
- * type, create the reservation. On a 409 (someone booked the last car while
- * the manager was filling the form) we never trust the UI: show the server's
- * message and lead the user back to a fresh availability read.
+ * The picker page: fill in pickup + days + borrower, see live availability
+ * per type, and reserve a type straight from ITS row in the table - no
+ * separate type select, no separate CTA. The window is global to all
+ * types, so "which type" and "reserve" are naturally one action.
+ *
+ * Reservation buttons live OUTSIDE the <form> element (they sit in the
+ * table) but belong to it via form="book-form": clicking one triggers the
+ * form's native validation (required pickup/email, days>=1) and submits,
+ * with the row's type carried as the button's submitter VALUE - the
+ * actual payload authority stays in one submit() handler.
+ *
+ * On a 409 (someone booked the last car while the manager was filling the
+ * form) we never trust the UI: show the server's message and lead the
+ * user back to a fresh availability read.
  */
 export default function BookingPage() {
-  const [carType, setCarType] = useState<CarType>('SEDAN')
   const [pickupAt, setPickupAt] = useState(tomorrowAt10())
   const [days, setDays] = useState(3)
   const [borrowedBy, setBorrowedBy] = useState('')
@@ -40,8 +49,15 @@ export default function BookingPage() {
     void loadAvailability()
   }, [loadAvailability])
 
-  async function submit(e: React.FormEvent) {
+  async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
+    // Which row's button started the submission decides the type.
+    const submitter = (e.nativeEvent as SubmitEvent).submitter as
+      | (HTMLButtonElement & { value: CarType })
+      | null
+    const carType = submitter?.value
+    if (!carType) return
+
     setBusy(true)
     setError(null)
     setNotice(null)
@@ -63,29 +79,10 @@ export default function BookingPage() {
     }
   }
 
-  const selected = availability?.[carType] ?? null
-  const noneAvailable = selected?.available === 0
-
   return (
     <section>
       <h2>Book a car</h2>
-      {notice && <p className="notice ok">{notice}</p>}
-      {error && (
-        <p className="notice err">
-          {error} <button onClick={() => void loadAvailability()}>Refresh</button>
-        </p>
-      )}
-      <form onSubmit={submit} className="card">
-        <label>
-          Car type
-          <select value={carType} onChange={(e) => setCarType(e.target.value as CarType)}>
-            {CAR_TYPES.map((t) => (
-              <option key={t} value={t}>
-                {t}
-              </option>
-            ))}
-          </select>
-        </label>
+      <form id="book-form" onSubmit={submit} className="card">
         <label>
           Pickup (your local time)
           <input
@@ -115,10 +112,14 @@ export default function BookingPage() {
             required
           />
         </label>
-        <button type="submit" disabled={busy || noneAvailable}>
-          {noneAvailable ? `${carType} fully booked for that window` : busy ? 'Booking…' : 'Reserve'}
-        </button>
+        <p className="muted">Pick a type below to reserve it for the window above.</p>
       </form>
+      {notice && <p className="notice ok">{notice}</p>}
+      {error && (
+        <p className="notice err">
+          {error} <button onClick={() => void loadAvailability()}>Refresh</button>
+        </p>
+      )}
       <h3>Availability for the chosen window</h3>
       {availability ? (
         <table>
@@ -138,10 +139,13 @@ export default function BookingPage() {
                   <td>{a ? `${a.available} / ${a.fleetSize}` : 'no cars of this type'}</td>
                   <td>
                     <button
-                      onClick={() => setCarType(t)}
+                      form="book-form"
+                      type="submit"
+                      name="carType"
+                      value={t}
                       disabled={busy || a?.available === 0}
                     >
-                      pick
+                      {busy ? 'Booking…' : 'Reserve'}
                     </button>
                   </td>
                 </tr>
