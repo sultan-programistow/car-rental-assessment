@@ -98,7 +98,9 @@ server state** (RFC 9110 §15.5.10 — double-booking, canceling history); 404 =
   `DATABASE_URL_JDBC` + `DATABASE_USER` + `DATABASE_PASSWORD`.
 - Frontend: separate Vite project on Vercel; set `VITE_API_URL` to the backend's origin and
   `CARRENTAL_ALLOWED_ORIGINS` on the backend to the frontend's origin (CORS is opt-in — absent in
-  same-origin deployment).
+  same-origin deployment). `frontend/vercel.json` rewrites every unknown path to `/index.html`
+  (SPA fallback) so deep links like `/reservations` survive a page reload — without it, Vercel's
+  static host 404s any route that isn't a real file, since `BrowserRouter` URLs are app-internal.
 
 ## Known limitations & tradeoffs (the honest list)
 
